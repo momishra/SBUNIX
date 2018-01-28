@@ -1,0 +1,46 @@
+#ifndef MMU_H
+#define MMU_H
+
+//address is pageno + offset
+#define PAGENO(addr) (((uint64_t)(addr)) >> PTXSHIFT) //get pageno
+
+//part of address 
+#define PML4(addr) ((((uint64_t)(addr)) >> PML4SHIFT) & 0x1FF) //PML4 address part
+#define PDPE(addr) ((((uint64_t)(addr)) >> PDPESHIFT ) & 0x1FF) //PDPE part
+#define PDE(addr) ((((uint64_t)(addr)) >> PTSHIFT ) & 0x1FF) //PDE part
+#define PTE(addr) ((((uint64_t)(addr)) >> PGSHIFT) & 0x1FF) //PTE part
+#define POFF(addr) (((uint64_t)(addr)) & 0xFFF) //offset part
+#define PTX(la) ((((uint64_t)(la))>>PTXSHIFT)&0x1FF) //Page table index
+#define PDX(la) ((((uint64_t)(la)) >> PDXSHIFT) & 0x1FF)
+//the above obtained addresses will be combined with prev table entry to find next table entry
+
+#define PGADDR(pml,pdpe,pde,pte,off) ((void *) ((pml) << PML4SHIFT | (pdpe) << PDPESHIFT | (pde) << PTSHIFT | (pte) << PGSHIFT | off)) //get the address from each part again
+#define PTE_AVAIL 0xE00 //available for software use
+#define PTE_USER	(PTE_AVAIL | PTE_P | PTE_W | PTE_U)
+//512 because of addition of 4th level - PML4
+#define NUMPLM 512 //plm4e
+#define NUMPDPE 512 //page directory pointer entry
+#define NUMPDE 512 //page directory entry
+#define NUMPTE 512 //page table entry
+
+#define PGSIZE 4096 //bytes
+#define PGSHIFT 12 //len in bits of offset part of virtual address
+#define PTXSHIFT 12 //offset of PTX in a linear address
+#define PTSIZE (PGSIZE*NUMPTE) //512*4096
+#define PTSHIFT 21 //page table
+#define PDXSHIFT 21 //offset of a PDX in a linear Address
+#define PDPESHIFT 30 //page directory pointer
+#define PML4SHIFT 39 //PML4
+#define PTE_ADDR(pte)	((uint64_t) (pte) & ~0xFFF)
+#define PTE_P 0x001 //Present bit
+#define PTE_R 0x002 //read\write
+#define PTE_U 0x004 //user\supervisor
+#define PTE_W 0x008 //write-through
+#define PTE_C 0x010 //cache-disabled
+#define PTE_A 0x020 //accessed bit
+#define PTE_D 0x040 //dirty bit
+#define PTE_S 0x080 //page size
+#define PTE_G 0x180 //ignored
+
+
+#endif

@@ -1,0 +1,116 @@
+#include<sys/defs.h>
+#include<sys/kprintf.h>
+#include<sys/pci.h>
+#include<sys/ahci.h>
+
+uint16_t pciConfigRead(uint8_t bus, uint8_t device, uint8_t func, uint8_t offset){
+        uint32_t address;
+        uint32_t lbus = (uint32_t)bus;
+        uint32_t ldevice = (uint32_t)device;
+        uint32_t lfunc = (uint32_t)func;
+        uint16_t tmp =0;
+        uint32_t tmp1;
+        address = (uint32_t)((lbus << 16) |(ldevice << 11) | (lfunc << 8) | (offset & 0xfc) | ((uint32_t)0x80000000));
+        __asm__ volatile ("outl %0,%w1" : : "a"(address),"d"(0xCF8));
+        __asm__ volatile("inl %w1, %0" : "=a"(tmp1) : "d"(0xCFC));
+        tmp = (uint16_t)((tmp1 >> ((offset & 2)* 8)) & 0xFFFF);
+        return tmp;
+        }
+
+uint16_t getvendorid(uint8_t bus, uint8_t device, uint8_t func){
+        uint16_t vid = (uint16_t)pciConfigRead(bus,device,func,0);
+        return vid;
+}
+
+uint8_t getheadertype(uint8_t bus, uint8_t device, uint8_t func){
+        uint8_t tmp = (uint8_t)(pciConfigRead(bus,device,func,0xE)>>8);
+        //uint8_t headerType = (uint8_t)tmp;
+        return tmp;
+}
+
+uint16_t getdeviceid(uint8_t bus, uint8_t device, uint8_t func){
+	uint16_t tmp = (uint16_t)pciConfigRead(bus,device,func,2);
+	return tmp;	
+}
+
+uint8_t getbaseclass(uint8_t bus, uint8_t device, uint8_t func){
+        uint8_t tmp = (uint8_t)((pciConfigRead(bus,device,func,0x0B)>>8) & 0xFF);
+        //uint8_t headerType = (uint8_t)tmp;
+        return tmp;
+}
+
+uint8_t getsubclass(uint8_t bus, uint8_t device, uint8_t func){
+        uint8_t tmp = (uint8_t)(pciConfigRead(bus,device,func,0x0A) & 0xFF);
+        //uint8_t headerType = (uint8_t)tmp;
+        return tmp;
+}
+
+uint8_t getprogif(uint8_t bus, uint8_t device, uint8_t func){
+        uint8_t tmp = (uint8_t)((pciConfigRead(bus,device,func,0x09)>>8) & 0xFF);
+        //uint8_t headerType = (uint8_t)tmp;
+        return tmp;
+}
+
+void checkfunction(uint8_t bus, uint8_t device, uint8_t function)
+{
+	uint8_t baseclass;
+	uint8_t subclass;
+	//uint8_t secbus;
+	uint8_t progif;
+	baseclass = getbaseclass(bus, device, function);
+	subclass = getsubclass(bus,device, function);
+	progif = getprogif(bus,device,function);
+	/*
+	if ((baseclass == 0x06) && (subclass == 0x04))
+	{
+		secbus = getsecbus(bus,device,function);
+		checkbus(secbus);
+	}
+	*/
+	if ((baseclass == 0x01) && (subclass == 0x06 && progif == 0x01))
+	{
+		//kprintf("PCI Device Found");
+		uint16_t deviceid = getdeviceid(bus,device,function);
+		kprintf("Device id : %x",deviceid);
+		kprintf("bus number: %d", bus);
+	}
+
+	
+}
+
+void checkdevice(uint8_t bus, uint8_t device)
+{
+	uint8_t function =0;
+	uint16_t vendorid;
+	vendorid = getvendorid(bus,device,function);
+	if (vendorid == 0xFFFF)
+	{
+		return;
+	}
+	checkfunction(bus,device,function);
+	uint8_t headertype = getheadertype(bus,device,function);
+	if ((headertype & 0x80)!= 0)
+	{
+		for(function=1;function<8;function++)
+		{
+			if(getvendorid(bus,device,function) != 0xFFFF)
+			checkfunction(bus, device, function);
+		}
+	}
+}
+
+void checkbuses(void)
+{
+	uint8_t bus;
+	uint8_t device;
+	
+	for(bus =0; bus <256; bus++)
+	{
+		for(device = 0; device<32; device ++)
+		{
+			checkdevice(bus,device);
+		}
+	}
+}
+
+

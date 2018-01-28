@@ -1,0 +1,44 @@
+.global testISR
+testISR:
+	iret
+
+.global idt_load
+idt_load:
+	lidtq (%rax)
+	retq
+
+
+.global timr
+timr:
+	cli
+	push $0
+	push $32
+	push %rax
+	push %rcx
+	push %rdx
+	push %rbx
+	push %rbp
+	push %rsi
+	push %rdi
+	mov %rax, %ds
+	push %rax
+	mov %rax, 0x10
+	mov %ds, %rax
+	mov %es, %rax
+	mov %fs, %rax
+	mov %gs, %rax
+	call irq_function
+	pop %rax
+	mov %ds, %rax
+	mov %es, %rax
+	mov %fs, %rax
+	mov %gs, %rax
+	pop %rdi
+	pop %rsi
+	pop %rbp
+	pop %rbx
+	pop %rdx
+	pop %rcx
+	pop %rax
+	add %rsp, 8	
+        iretq

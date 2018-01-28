@@ -1,0 +1,155 @@
+#include<sys/sched.h>
+#include<sys/pmap.h>
+#include<sys/defs.h>
+#include<sys/kprintf.h>
+#include<sys/gdt.h>
+uint64_t *old_rsp0;
+uint64_t *old_rip0;
+uint64_t *old_rsp1;
+
+void dummy()
+{
+  curr_task = (struct task_struct *)kmalloc(sizeof(struct task_struct *));
+  struct task_struct *head;
+  head = curr_task;
+  curr_task->rip = (uint64_t*)&fun1;
+  curr_task->rsp = (uint64_t*)page_alloc(0);
+  //curr_task->stack = curr_task->rsp;
+  curr_task->ntask = (struct task_struct *)kmalloc(sizeof(struct task_struct *));
+  curr_task = curr_task->ntask;
+  curr_task->rip = (uint64_t*)&fun2;
+  curr_task->rsp = (uint64_t*)page_alloc(0);
+  //curr_task->stack = curr_task->rsp;
+  curr_task->ntask=head;
+  curr_task = curr_task->ntask;
+  
+}
+
+void init_context_switch(){
+  __asm__ __volatile__ (
+    "movq %%rsp, %0;"
+    //"movq $1f,%1;"
+    :"=g"(old_rsp0)
+    :
+    :"memory"
+  );
+  __asm__ __volatile__ (
+    "movq $1f,%0;"
+    "movq %1, %%rsp;"
+    "pushq %2;"
+    "retq;"
+    "1:\t"
+    :"=g"(old_rip0)
+    :"r"(curr_task->rsp), "r"(curr_task->rip)
+    :"memory"
+);
+  kprintf("\nend switch");
+}
+
+void switch_to(struct task_struct *prev, struct task_struct *next){
+  __asm__ __volatile__ (
+    "movq %%rsp, %0;"
+    "movq $1f,%1;"
+    :"=g"(prev->rsp),"=g"(prev->rip)
+    :
+    :"memory"
+  );
+  
+  __asm__ __volatile__ (
+    "movq %0, %%rsp;"
+    "pushq %1;"
+    "retq;"
+    :
+    :"r"(next->rsp), "r"(next->rip)
+    :"memory"
+);  
+  
+  /*__asm__ __volatile__ (
+    "movq $1f,%0;"
+    "movq %1, %%rsp;"
+    "pushq %2;"
+    "retq;"
+    :"=g"(prev->rip)
+    :"r"(next->rsp), "r"(next->rip)
+);*/
+
+  /*
+    __asm__ volatile(
+      //"movq %%rsp,%1;"
+      //"movq $1f,%0;"
+      "movq %0, %%rsp;"
+      "pushq %1;"
+      "retq;"
+      "1:\t"
+    //  :"=g"(prev->rip)
+      :
+      :"r"(next->rsp),"r"(next->rip)
+    );
+    */
+  kprintf("end switch to\n");
+}
+
+void schedule_sp()
+{
+//struct task_struct *prev = curr_task;
+//struct task_struct *next = curr_task->ntask;
+
+__asm__ volatile(
+      //"movq %%rsp,%1;"
+      //"movq $1f,%0;"
+      "movq %0, %%rsp;"
+      "pushq %1;"
+      "retq;"
+      "1:\t"
+    //  :"=g"(prev->rip)
+      :
+      :"r"(old_rsp0),"r"(old_rip0)
+    );
+
+
+}
+void schedule()
+{
+kprintf("Schedule start\n");
+struct task_struct *prev = curr_task;
+struct task_struct *next = curr_task->ntask;
+//curr_task = curr_task->ntask;
+kprintf("\nend curr_task\n");
+switch_to(prev, next);
+kprintf("end schedule\n");
+}
+
+void fun1()
+{
+kprintf("hello");
+schedule();
+}
+
+void fun2()
+{
+kprintf("--world--");
+schedule_sp();
+}
+
+struct vm_area_struct *allocVMA(struct mm_struct *mm){
+	struct vm_area_struct *last;
+	char *temp;	
+
+	if(mm->mmap == NULL){ //nothing in vma list
+		temp = (char*)kmalloc(1);
+		last = (struct vm_area_struct*)temp;
+		mm->mmap = last;
+		mm->mm_count += 1;
+		return (struct vm_area_struct *)temp; 
+	}else{ 
+	//iterate till the last element in vmalist
+	last = mm->mmap;
+	while(last->vm_next != NULL){
+		last = last->vm_next;
+	}
+	temp = (char*)last + sizeof(struct vm_area_struct);
+	last->vm_next = (struct vm_area_struct*)temp;
+	mm->mm_count +=1;
+	return (struct vm_area_struct*)temp;
+	}
+}

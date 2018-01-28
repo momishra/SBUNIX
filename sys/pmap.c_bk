@@ -1,0 +1,333 @@
+#include<sys/defs.h>
+#include<sys/kprintf.h>
+#include<sys/memlayout.h>
+#include<sys/pmap.h>
+#include<sys/types.h>
+//extern void loadPageDirectory(unsigned int*);
+//extern void enablePaging();
+
+//uint32_t page_directory[1024] __attribute__((aligned(4096)));
+//uint32_t first_page_table[1024] __attribute__((aligned(4096)));
+
+uint64_t end;
+size_t npages;
+static size_t npages_basemem;
+pml4e_t *boot_pml4e;
+uint64_t boot_cr3;
+
+struct Page *page;
+static struct Page *page_free_list;
+
+uint64_t *pte;
+
+void mem_initialise(uint32_t* modulep, void* physbase, void* physfree)
+{
+//static size_t npages_basemem;
+  static size_t npages_extmem;
+  end = KERNBASE+(uint64_t)physfree;
+  kprintf("end: %p\n",end);
+  struct smap_t {
+    uint64_t base, length;
+    uint32_t type;
+  }__attribute__((packed)) *smap;
+  while(modulep[0] != 0x9001) modulep += modulep[1]+2;
+  for(smap = (struct smap_t*)(modulep+2); smap < (struct smap_t*)((char*)modulep+modulep[1]+2*4); ++smap) {
+    if (smap->type == 1 /* memory */ && smap->length != 0) {
+        if (smap->base==0)
+        {
+                npages_basemem=smap->length/4096;
+                kprintf("Lower Memory Pages = %d\n",npages_basemem);
+        }
+        else
+        {
+                npages_extmem=((smap->base+smap->length) - (uint64_t)physfree)/4096;
+                kprintf("Higher Memory Pages = %d\n",npages_extmem);
+        }
+      kprintf("Available Physical Memory [%p-%p]\n", smap->base, smap->base + smap->length);
+    }
+  }
+  npages=npages_basemem+npages_extmem;
+  kprintf("Available Physical Pages [%d]\n", npages);
+  //kprintf("physfree %p", (uint64_t)physfree);
+//  kprintf("tarfs in [%p:%p]", &_binary_tarfs_start, &_binary_tarfs_end);
+
+pml4e_t *pml4e;
+
+pml4e = boot_alloc(PGSIZE);
+kprintf("pml4e: %p\n",pml4e);
+memset(pml4e,0,PGSIZE);
+
+boot_pml4e = pml4e;
+
+boot_cr3 = PADDR(pml4e);
+kprintf("Boot_cr3 %p\n",boot_cr3);
+
+page = (struct Page*)boot_alloc(npages*sizeof(struct Page));
+
+page_initialise();
+
+
+boot_map_region(pml4e,KERNBASE+(uint64_t)physbase, 0x7ffe000, (uint64_t)physbase,PTE_W|PTE_P|PTE_U);
+boot_map_region( pml4e,KERNBASE+(uint64_t)0xb8000, 4096*3, (uint64_t)0xb8000,PTE_W|PTE_P|PTE_U);
+//boot_map_segment( pml4e, 0xFFFFFFFF00000000+(uintptr_t)bar5, 4096, (uintptr_t)bar5,PTE_W|PTE_P|PTE_U);
+   __asm__ volatile("mov %0, %%cr3":: "b"(boot_cr3));
+struct Page *p=page_alloc(0);
+//kprintf("adi");
+    kprintf("\n%p %p\n",p,PADDR(p));
+
+}
+
+void *boot_alloc(uint64_t n)
+{
+static char *nextfree; //virtual address of next byte of free memory
+char *result=0;
+if(!nextfree){
+nextfree = CEIL((char*)end, PGSIZE);
+result = nextfree;
+nextfree = nextfree+n;
+}
+else{
+if(n==0)
+{
+nextfree = CEIL((char*)nextfree, PGSIZE);
+//PADDR(nextfree);
+result = nextfree;
+}
+else{
+if(n>0){
+nextfree = CEIL((char*)nextfree, PGSIZE);
+result = nextfree;
+nextfree+=n;
+//PADDR(nextfree);
+}
+}
+}
+return result;
+}
+
+void page_initialise(void)
+{
+size_t i;
+uint64_t p;
+for (i=0;i<npages;i++)
+{
+if (i==0){
+page[i].pp_ref = 1;
+page[i].pp_link = NULL;
+}
+else if (i<npages_basemem){
+page[i].pp_ref = 0;
+page[i].pp_link = page_free_list;
+page_free_list = &page[i];
+}
+else if((i<=(EXTPHYSMEM/PGSIZE) || (i<(((uint64_t)boot_alloc(0)- KERNBASE)>>PGSHIFT)))){
+page[i].pp_ref++;
+page[i].pp_link = NULL;
+}
+else{
+page[i].pp_ref = 0;
+page[i].pp_link = page_free_list;
+page_free_list = &page[i];
+}
+p = page2pa(&page[i]);
+if ((p ==0 || p == IOPHYSMEM) && (page[i].pp_ref == 0))
+kprintf("page error: i %d\n",i);
+}
+}
+
+struct Page* page_alloc(int alloc_flag)
+{
+struct Page *page = NULL;
+if(page_free_list)
+{
+page = page_free_list;
+page_free_list = page_free_list->pp_link;
+if(alloc_flag && ALLOC_ZERO)
+memset(page2kva(page),0,PGSIZE);
+}
+else
+return NULL;
+return page;
+}
+
+void page_free(struct Page *page)
+{
+if(page->pp_ref!=0)
+kprintf("page->pp_ref is not zero");
+else if(page->pp_link)
+kprintf("page_>pp_link is not null");
+else
+{
+page->pp_link= page_free_list;
+page_free_list = page;
+}
+}
+void page_decref(struct Page *page)
+{
+page->pp_ref--;
+if(page->pp_ref==0)
+page_free(page);
+}
+
+pte_t *pml4e_walk(pml4e_t *pml4e, const	void *va, int create)
+{
+pte_t *pml4indexptr = NULL;
+int pml4eindex;
+//int pdpeindex;
+uint64_t temp;
+struct Page *page=NULL;
+if(pml4e==NULL)
+return NULL;
+pml4eindex= PML4(va);
+
+if((uint64_t*)pml4e[pml4eindex]==NULL && create== false)
+return NULL;
+
+else if((uint64_t*)pml4e[pml4eindex] == NULL && create== true)
+{
+int perm = PTE_USER;
+page = page_alloc(ALLOC_ZERO);
+if(!page)
+return NULL;
+page->pp_ref++;
+pml4e[pml4eindex] = page2pa(page) | perm;
+}
+
+temp = pml4e[pml4eindex];
+temp = PTE_ADDR(temp);
+temp= (uint64_t)KADDR(temp);
+pml4indexptr = (pte_t*)pdpe_walk((pte_t*)temp, va, create);
+if (pml4indexptr == NULL && page!=NULL)
+{
+page_decref(page);
+pml4e[pml4eindex] = 0;
+}
+return pml4indexptr;
+}
+
+pte_t *pdpe_walk(pdpe_t *pdpe, const void *va, int create)
+{
+pte_t* pdpeindexptr = NULL;
+int pdpeindex = 0;
+//int pgdirindx =0;
+uint64_t temp;
+struct Page *page = NULL;
+if(pdpe == NULL)
+{
+return NULL;
+}
+pdpeindex = PDPE(va);
+if(!(uint64_t*)pdpe[pdpeindex] && create == false)
+return NULL;
+else if((uint64_t*)pdpe[pdpeindex] == NULL && create==true)
+{
+int perm = PTE_W | PTE_U | PTE_P;
+struct Page *page = page_alloc(ALLOC_ZERO);
+if(!page)
+return NULL;
+page->pp_ref++;
+pdpe[pdpeindex] = page2pa(page) | perm;
+}
+temp = pdpe[pdpeindex];
+temp = PTE_ADDR(temp);
+temp = (uint64_t)KADDR(temp);
+pdpeindexptr = (pte_t*)pgdir_walk((pte_t*)temp,va,create);
+if(pdpeindexptr == NULL && page!=NULL)
+{
+page_decref(page);
+pdpe[pdpeindex]=0;
+}
+return pdpeindexptr;
+}
+
+pte_t *pgdir_walk(pde_t *pgdir, const void *va, int create)
+{
+pte_t *pgtblindexptr=NULL;
+int dirindex;
+int pgtblindex;
+uint64_t temp;
+if(pgdir == NULL)
+return NULL;
+dirindex = PDX(va);
+pgtblindex = PTX(va);
+if((uint64_t*)pgdir[dirindex]==NULL && create == false)
+return NULL;
+else if((uint64_t*)pgdir[dirindex]==NULL && create == true)
+{
+int perm = PTE_W | PTE_U | PTE_P;
+struct Page *page = page_alloc(ALLOC_ZERO);
+if(!page)
+return NULL;
+page->pp_ref++;
+pgdir[dirindex] = page2pa(page) | perm;
+}
+temp = pgdir[dirindex];
+temp= PTE_ADDR(temp);
+temp = (uint64_t)KADDR(temp);
+pgtblindexptr = (pte_t*)temp + pgtblindex;
+return pgtblindexptr;
+}
+
+void boot_map_region(pml4e_t *pml4e, uint64_t la, size_t size, uint64_t pa, int perm)
+{
+pte_t *pgtblindexptr=NULL;
+
+int i=0;
+if(pml4e == NULL)
+{
+return;
+}
+
+for(i=0;i<size/PGSIZE;i++)
+{
+pgtblindexptr = pml4e_walk(pml4e, (void*)la, 1);
+if(pgtblindexptr == NULL)
+{
+kprintf("Could not Boot Up!!");
+continue;
+}
+*pgtblindexptr = pa | perm;
+pa += PGSIZE;
+la+=PGSIZE;
+}
+}
+uint64_t* kmalloc(uint64_t size)
+{
+//uint64_t temp = size;
+uint64_t page_count=0;
+struct Page *page;
+if (size<PGSIZE)
+page_count++;
+else{
+page_count = size/PGSIZE;
+if((size - (page_count*PGSIZE)>0))
+page_count++;
+}
+
+if(page_free_list){
+page = page_free_list;
+
+uint64_t *st = (uint64_t *)page2kva(page);
+
+for(int i=0;i<page_count; i++)
+{
+page->pp_ref++;
+memset(page2kva((void*)page), 0, PGSIZE);
+page = page->pp_link;
+}
+page_free_list = page;
+return st;
+}
+return NULL;
+}
+
+void pfree(struct Page *page)
+{
+if (page->pp_ref == 0)
+{
+page->pp_link = page_free_list;
+page_free_list = page;
+}
+else
+panic("pp_ref for page is not zero");
+}

@@ -1,0 +1,45 @@
+#ifndef __SCHED_H
+#define __SCHED_H
+
+struct task_struct{ //process descriptor
+	char pname[50];
+	volatile long state; //-1 unrunnable 0 runnable, >0 stopped
+	uint64_t *stack;
+	int on_cpu; //timestamp
+	struct mm_struct mm; //memory descriptor
+	pid_t pid;
+	pid_t ppid;
+	struct vm_area_struct vma;
+	uint64_t* __rsp;
+	uint64_t* __rip;
+	struct task_struct ptask; //parent task
+	struct task_struct ntask; //next task
+	struct task_struct ctask; //child task
+	struct task_struct stask; //sibling task	
+};
+
+struct mm_struct{ //program's memory
+  struct vm_area_struct *mmap; //list of vmas
+  int mm_count; //number of references to mm_struct
+  uint64_t* pte;
+  uint64_t* pgd;
+  unsigned long start_code, end_code, start_data, end_data;
+  unsigned long start_brk, brk, start_stack;
+  unsigned long arg_start, arg_end, env_start, env_end;
+  unsigned long def_flags;
+  unsigned long total_vm; //total paes mapped
+  unsigned long locked_vm;
+};
+
+struct vm_area_struct{
+  unsigned long vm_start; //start address within vm_mm
+  unsigned long vm_end; //first byte after end address within vm_mm
+  struct vm_area_struct *vm_next,*vm_prev;
+  struct mm_struct *vm_mm;
+  unsigned long vm_flags; //protection bits
+  unsigned long vm_pgoff; //offset within vm_file in PGSIZE unit
+};
+
+
+
+#endif

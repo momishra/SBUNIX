@@ -1,0 +1,115 @@
+#include<sys/pmap.h>
+#include <sys/defs.h>
+#include <sys/gdt.h>
+#include <sys/kprintf.h>
+#include <sys/tarfs.h>
+#include <sys/sched.h>
+#include<sys/memlayout.h>
+//#include <sys/ahci.h>
+//#include <sys/idt.h>
+//#include <sys/isr.h>
+//#include <sys/pci.h>
+
+#define INITIAL_STACK_SIZE 4096
+uint8_t initial_stack[INITIAL_STACK_SIZE]__attribute__((aligned(16)));
+uint32_t* loader_stack;
+extern char kernmem, physbase;
+extern uint64_t boot_cr3;
+extern pml4e_t *boot_pml4e;
+
+//extern static unsigned short *ptr = (unsigned short*)0xb8000;
+
+void idleProcess(){
+
+while(1){
+	//schedule();
+}
+
+}
+
+void start(uint32_t *modulep, void *physbase, void *physfree)
+{ 
+	 //mem_initialise(modulep,physbase,physfree);
+ 	 //boot_alloc();
+	 // init_pd();
+	 // init_pt();
+ 	 //idt_install();
+ 	 mem_initialise(modulep,physbase,physfree);
+  	//kprintf("adi");
+  	//__asm__ volatile("sti");
+ 	// int_handler(); 
+  	//key_handler();
+  	//__asm__ volatile("INT $33");
+  	//__asm__ volatile("sti");
+  	//checkAllBuses();
+  	//checkbuses();
+	//creating kernel threads
+	init_gdt();
+ 	// kprintf("Initial stack 4095 %x and addr %p\n",initial_stack[4095],&initial_stack[4095]);
+	struct task_struct *pcb0 = (struct task_struct*)kmalloc(sizeof(struct task_struct));
+	pcb0->cr3 = boot_cr3;
+	pcb0->pml4e =(uint64_t) boot_pml4e;
+	pcb0->pid = 0; 
+	pcb0->stack = (uint64_t *)initial_stack;
+	//after this put this process in readyQ
+	readyQ[0] = (uint64_t)pcb0;
+	
+	//create new page table and update cr3 thing
+	
+	struct Page *page = page_alloc(0);
+	uint64_t *pml4e1 = (uint64_t*)page2kva(page);
+	//is this even working
+	/*
+	uint64_t *vaddr = (uint64_t*) 0xFFFFFFFF80808080;
+	kprintf("Physical address of vaddr is %p\n",PADDR(vaddr));
+	pte_t *pte = pml4e_walk(pml4e1, (const void *)vaddr, 1);
+	kprintf("Physical pte is %p\n",PADDR(pte));
+	//end check
+	kprintf("New task pml4e is %p\n",pml4e1);
+	*/
+	uint64_t cr3_1 = PADDR(pml4e1);
+	struct task_struct *pcb1 = (struct task_struct*)kmalloc(sizeof(struct task_struct));
+	pcb1->cr3 = cr3_1;
+	pcb1->pml4e= (uint64_t)pml4e1;
+	pcb1->pid =1;
+	pcb1->state = 0;
+	pcb1->rsp = (uint64_t*)((char*)page_alloc(0)+PGSIZE-16);
+	kprintf("Stack pointer is %p",pcb1->rsp);
+	
+	kprintf("fun address: %x",fun1());
+	
+
+	//a new task is only created by cloning  current process (fork() or clone())
+
+
+  while(1);
+}
+
+void boot(void)
+{
+  // note: function changes rsp, local stack variables can't be practically used
+  register char *temp2;
+  for(temp2 = (char*)0xb8001; temp2 < (char*)0xb8000+160*25; temp2 += 2) *temp2 = 7 /* white */;
+  __asm__ volatile (
+    "cli;"
+    "movq %%rsp, %0;"
+    "movq %1, %%rsp;"
+    :"=g"(loader_stack)
+    :"r"(&initial_stack[INITIAL_STACK_SIZE])
+  );
+
+//  init_gdt();
+  start(
+    (uint32_t*)((char*)(uint64_t)loader_stack[3] + (uint64_t)&kernmem - (uint64_t)&physbase),
+    (uint64_t*)&physbase,
+    (uint64_t*)(uint64_t)loader_stack[4]
+  );
+/*
+ for(
+ nitialise(modulep,physbase,physfree);   temp1 = "!!!!! start() returned !!!!!", temp2 = (char*)0xb8000;
+    *temp1;
+    temp1 += 1, temp2 += 2
+  ) *temp2 = *temp1;
+*/
+  while(1) __asm__ volatile ("hlt");
+}
